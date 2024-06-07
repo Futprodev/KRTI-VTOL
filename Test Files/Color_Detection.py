@@ -127,9 +127,9 @@ def Detect_Gate(cam):
                 print("yaw left")
 
             if bcy < (cy-10):
-                print("down")
-            elif bcy > (cy+10):
                 print("up")
+            elif bcy > (cy+10):
+                print("down")
 
         cv2.line(video, (cx,0), (cx,height), (0,0,255), 2)
         cv2.line(video, (0,cy), (width,cy), (0,0,255), 2)
