@@ -4,13 +4,6 @@ import numpy as np
 
 cam = cv2.VideoCapture(0)
 
-def check_line_cross(line_start, line_end, object_y):
-    x1, y1 = line_start
-    x2, y2 = line_end
-    grad = (x2-x1)/(y2-y1)
-    line_x = int(((object_y-y1)*grad) + x2)
-    return line_x
-
 def Detect_Orange(cam):
     res, video = cam.read()
     height, width, _ = video.shape
@@ -20,19 +13,12 @@ def Detect_Orange(cam):
     x1 = width//4
     x2 = width*3//4
 
-    # Define the start and end points of the line
-    start_point1 = (x1, height) #left
-    end_point1 = (cx-40, 0)
-    start_point2 = (x2, height) #right
-    end_point2 = (cx+40, 0)
-
     #orange in BGR [0, 165, 255]
     lower_limit = np.array([6, 110, 180])
     upper_limit = np.array([13, 140, 255])
     while True:
         result, video = cam.read()
-        cv2.line(video, start_point1, end_point1, (0,0,0), 3)
-        cv2.line(video, start_point2, end_point2, (0,0,0), 3)
+        cv2.line(video, (cx, 0), (cx, height), (0,0,0), 3)
         hsvimage = cv2.cvtColor(video, cv2.COLOR_BGR2HSV)
 
         mask = cv2.inRange(hsvimage, lower_limit, upper_limit)
@@ -53,22 +39,10 @@ def Detect_Orange(cam):
                 cv2.circle(video, (ContourX, ContourY), 4, (0, 255, 0), )
                 cv2.circle(video, extLeft, 2, (0, 0, 255), 3)
                 cv2.circle(video, extRight, 2, (0, 0, 255), 3)
-                if ContourX < cx: #left
-                    line_x = check_line_cross(start_point1, end_point1, ContourY)
-                    if mid_x < line_x:
-                        print("turn left")
-                    elif (extLeft[0] < line_x) and (mid_x < (cx-5)):
-                        print("small left")
-                    else:
-                        print("centered")
-                elif ContourX > cx: #right
-                    line_x = check_line_cross(start_point2, end_point2, ContourY)
-                    if mid_x > line_x:
-                        print("turn right")
-                    elif (extLeft[0] > line_x) and (mid_x > (cx+5)):
-                        print("small right")
-                    else:
-                        print("centered")
+                if ContourX < (cx-10):
+                    print("turn left")
+                elif ContourX > (cx+10):
+                    print("turn right")
                 else:
                     print("centered")
                 
@@ -93,12 +67,6 @@ def Detect_Red(cam):
 
     x1 = width//4
     x2 = width*3//4
-
-    # Define the start and end points of the line
-    start_point1 = (x1, height) #left
-    end_point1 = (cx-40, 0)
-    start_point2 = (x2, height) #right
-    end_point2 = (cx+40, 0)
     
     #red in bgr [0, 0, 255]
     lower_limit1 = np.array([3, 190, 145]) #red and orange
@@ -107,8 +75,7 @@ def Detect_Red(cam):
     upper_limit2 = np.array([8, 140, 255])
     while True:
         result, video = cam.read()
-        cv2.line(video, start_point1, end_point1, (0,0,0), 3)
-        cv2.line(video, start_point2, end_point2, (0,0,0), 3)
+        cv2.line(video, (cx, 0), (cx, height), (0,0,0), 3)
         hsvimage = cv2.cvtColor(video, cv2.COLOR_BGR2HSV)
         mask1 = cv2.inRange(hsvimage, lower_limit1, upper_limit1)
         mask2 = cv2.inRange(hsvimage, lower_limit2, upper_limit2)
@@ -130,22 +97,10 @@ def Detect_Red(cam):
                 cv2.circle(video, (ContourX, ContourY), 4, (0, 255, 0), )
                 cv2.circle(video, extLeft, 2, (0, 0, 255), 3)
                 cv2.circle(video, extRight, 2, (0, 0, 255), 3)
-                if ContourX < cx: #left
-                    line_x = check_line_cross(start_point1, end_point1, ContourY)
-                    if mid_x < line_x:
-                        print("turn left")
-                    elif (extLeft[0] < line_x) and (mid_x < (cx-5)):
-                        print("small left")
-                    else:
-                        print("centered")
-                elif ContourX > cx: #right
-                    line_x = check_line_cross(start_point2, end_point2, ContourY)
-                    if mid_x > line_x:
-                        print("turn right")
-                    elif (extLeft[0] > line_x) and (mid_x > (cx+5)):
-                        print("small right")
-                    else:
-                        print("centered")
+                if ContourX < (cx-10): #left
+                    print("turn left")
+                elif ContourX > (cx+10): #right
+                    print("turn right")
                 else:
                     print("centered")
                 
@@ -205,12 +160,10 @@ def Detect_Gate(cam):
         cv2.imshow("Mask", mask)
         cv2.imshow("Detect Gate", video)
 
-
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     cv2.destroyAllWindows()
-    
         
 #detect orange (object) then detect red (bucket) then gate (orange)
 Detect_Orange(cam)
