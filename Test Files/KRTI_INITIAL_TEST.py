@@ -1,7 +1,7 @@
 """
 BINUS ASO KRTI VTOL DRONE 2024
 Computer Vision: Teresa, Raymond
-Flight Controls: Maul, Kenrich
+Flight Controls: Kenrich, Maul
 """
 
 import time
@@ -11,16 +11,42 @@ import cv2
 from PIL import Image
 import numpy as np
 import RPi.GPIO as GPIO
-import math
 import threading
+from smbus2 import SMBus, i2c_msg
+
+################## LIDAR CONTROL #########################
+class TFminiI2C:
+    def __init__(self, I2Cbus, address):
+        self.I2Cbus = I2Cbus
+        self.address = address
+
+    def readDistance(self):
+        write = i2c_msg.write(self.address, [1, 2, 7])
+        read = i2c_msg.read(self.address, 7)
+        with SMBus(self.I2Cbus) as bus:
+            bus.i2c_rdwr(write, read)
+            data = list(read)
+            distance = data[3] << 8 | data[2]
+        return distance
+
+    def reset(self):
+        reset = i2c_msg.write(self.address, [0x06])
+        with SMBus(self.I2Cbus) as bus:
+            bus.i2c_rdwr(reset)
+            time.sleep(0.05)
+
+# LiDAR setup
+LIDAR_LEFT = TFminiI2C(1, 0x10)
+LIDAR_RIGHT = TFminiI2C(1, 0x11)
+LIDAR_FRONT = TFminiI2C(1, 0x12)
+LIDAR_DOWN = TFminiI2C(1, 0x14)
 
 ################## Relay Control #########################
 # GPIO setup
-RELAY_PIN = 17 #Pin nanti diubah sesuai sama pin di raspi
-
+RELAY_PIN = 17  # Adjust to the correct pin number
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(RELAY_PIN, GPIO.OUT)
-GPIO.output(RELAY_PIN, GPIO.LOW)  
+GPIO.output(RELAY_PIN, GPIO.LOW)
 
 def control_relay(state):
     if state == "ON":
@@ -32,11 +58,11 @@ def control_relay(state):
 
 def pick_object():
     control_relay("ON")
-    time.sleep(2)  # Tunggu electromagnet nyala
+    time.sleep(2)
 
 def drop_object():
     control_relay("OFF")
-    time.sleep(2)  # Tunggu electromagnet mati
+    time.sleep(2)
 
 ################## Computer Vision #########################
 # Initialize cameras
@@ -107,7 +133,7 @@ pid_y = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0)
 # Stage-based input
 stage = input("Type 1/2/3 \n 1: Cari barang orange \n 2: Barang orange udh diangkat, cari ember merah \n 3: Idle \n")
 
-# kamera depan 
+# Kamera depan 
 def front_camera_loop(cam):
     while True:
         result, frame = cam.read()
@@ -149,7 +175,7 @@ def front_camera_loop(cam):
     cam.release()
     cv2.destroyAllWindows()
 
-# kamera bawah 
+# Kamera bawah 
 def bottom_camera_loop(cam):
     global last_cX, last_cY
     while True:
@@ -238,6 +264,7 @@ def send_velocity(vehicle, velocity_x, velocity_y, velocity_z):
 
 # Main function
 def main():
+    global stage
     print("Type 1/2/3 \n 1: Cari barang orange \n 2: Barang orange udh diangkat, cari ember merah \n 3: Idle \n")
     while True:
         if stage == "1":
@@ -273,5 +300,52 @@ def main():
             print("Invalid stage. Please enter 1, 2, or 3.")
             break
 
+# Drone obstacle avoidance
+def obstacle_avoidance():
+    while True:
+        front_distance = LIDAR_FRONT.readDistance()
+        left_distance = LIDAR_LEFT.readDistance()
+        right_distance = LIDAR_RIGHT.readDistance()
+
+        if front_distance < 50:
+            print("Obstacle detected ahead. Checking sides...")
+            if left_distance > 300:
+                print("Turning left...")
+                send_velocity(vehicle, 0, 1, 0)  # Adjust this as needed
+                time.sleep(1)
+            elif right_distance > 300:
+                print("Turning right...")
+                send_velocity(vehicle, 0, -1, 0)  # Adjust this as needed
+                time.sleep(1)
+            else:
+                print("No clear path detected. Stopping...")
+                send_velocity(vehicle, 0, 0, 0)
+                break
+        else:
+            print("No obstacle detected. Moving forward...")
+            send_velocity(vehicle, 1, 0, 0)  # Move forward at 1 m/s
+            time.sleep(0.1)
+
+# Emergency signal check
+def check_signal_strength(signal):
+    # Add your signal strength checking logic here
+    return False
+
+# Start the obstacle avoidance in a separate thread
+obstacle_avoidance_thread = threading.Thread(target=obstacle_avoidance)
+obstacle_avoidance_thread.start()
+
+# Main program execution
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        print("Ensuring the drone lands and resources are cleaned up...")
+        vehicle.mode = VehicleMode("LAND")
+        while vehicle.armed:
+            time.sleep(1)
+
+        front_cam.release()
+        bottom_cam.release()
+        cv2.destroyAllWindows()
+        vehicle.close()
