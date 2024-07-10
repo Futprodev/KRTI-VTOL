@@ -1,7 +1,7 @@
 """
 BINUS ASO KRTI VTOL DRONE 2024
 Computer Vision: Teresa, Raymond
-Flight Controls: Kenrich, Maul
+Flight Controls: Maul, Kenrich
 """
 
 import time
