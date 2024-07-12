@@ -57,12 +57,20 @@ def control_relay(state):
         print("Relay OFF, electromagnet deactivated")
 
 def pick_object():
-    control_relay("ON")
-    time.sleep(2)
+    # Descend to pick up the object
+    print("Descending to pick up the object...")
+    send_velocity(vehicle, 0, 0, -0.2)  # Descend at 0.2 m/s
+    time.sleep(5)  # Adjust the sleep time based on required descent duration
+    send_velocity(vehicle, 0, 0, 0)  # Stop descent
 
+    # Activate the relay to pick up the object
+    control_relay("ON")
+    time.sleep(2)  # Wait for the electromagnet to activate
+    
 def drop_object():
     control_relay("OFF")
     time.sleep(2)
+############################################################
 
 ################## Computer Vision #########################
 # Initialize cameras
@@ -89,6 +97,7 @@ def detect_red(frame):
     mask_red = cv2.bitwise_or(mask_red1, mask_red2)
     contours_red, _ = cv2.findContours(mask_red, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     return contours_red
+##############################################################
 
 def drone_centering(center, frame_center, pid_x, pid_y):
     x_diff = center[0] - frame_center[0]
@@ -130,98 +139,48 @@ class PIDController:
 pid_x = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0)
 pid_y = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0)
 
-# Stage-based input
-stage = input("Type 1/2/3 \n 1: Cari barang orange \n 2: Barang orange udh diangkat, cari ember merah \n 3: Idle \n")
-
-# Kamera depan 
-def front_camera_loop(cam):
-    while True:
-        result, frame = cam.read()
-        if not result:
-            break
-
-        # Deteki orange
-        hsv_image = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        lower_limit = np.array([4, 120, 60])
-        upper_limit = np.array([23, 255, 255])
-        mask = cv2.inRange(hsv_image, lower_limit, upper_limit)
-        mask_ = Image.fromarray(mask)
-        bbox = mask_.getbbox()
-
-        height, width, z = frame.shape
-        cx = width // 2
-        cy = height // 2
-
-        if bbox is not None:
-            x1, y1, x2, y2 = bbox
-            frame = cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 5)
-            bcx = (x2 - x1) // 2 + x1
-            bcy = (y2 - y1) // 2 + y1
-            cv2.circle(frame, (bcx, bcy), 3, (255, 0, 0), 2)
-
-            if bcx < (cx - 20):
-                print("yaw right")
-            elif bcx > (cx + 20):
-                print("yaw left")
-
-        cv2.line(frame, (cx, 0), (cx, height), (0, 0, 255), 2)
-        cv2.line(frame, (0, cy), (width, cy), (0, 0, 255), 2)
-
-        cv2.imshow("Front Camera", frame)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cam.release()
-    cv2.destroyAllWindows()
-
-# Kamera bawah 
-def bottom_camera_loop(cam):
-    global last_cX, last_cY
-    while True:
-        success, frame = cam.read()
-        if not success:
-            break
-
-        if stage == "1":
-            contours = detect_orange(frame)
-        elif stage == "2":
-            contours = detect_red(frame)
-        else:
-            contours = None
-
-        frame_height, frame_width = frame.shape[:2]
-        frame_center = [frame_width // 2, frame_height // 2]
-        cv2.circle(frame, (frame_center[0], frame_center[1]), 7, (255, 0, 255), -1)
-        cv2.putText(frame, f" Frame Center: ({frame_center[0]}, {frame_center[1]})", (frame_center[0] - 70, frame_center[1] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-
-        if contours:
-            largest_contour = max(contours, key=cv2.contourArea)
-            M = cv2.moments(largest_contour)
-            if M["m00"] != 0:
-                cX = int(M["m10"] / M["m00"])
-                cY = int(M["m01"] / M["m00"])
-                last_cX, last_cY = cX, cY
-            cv2.drawContours(frame, [largest_contour], -1, (0, 255, 0), 2)
-
-        if last_cX is not None and last_cY is not None:
-            cv2.circle(frame, (last_cX, last_cY), 7, (255, 0, 0), -1)
-            cv2.putText(frame, f"Center: ({last_cX}, {last_cY})", (last_cX - 50, last_cY - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-            center = [last_cX, last_cY]
-
-            velocity_x, velocity_y = drone_centering(center, frame_center, pid_x, pid_y)
-            print(f"Velocity X: {velocity_x:.2f}, Velocity Y: {velocity_y:.2f}")
-
-        cv2.imshow('Bottom Camera', frame)
-
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-
-    cam.release()
-    cv2.destroyAllWindows()
-
 # Connect to the Vehicle
 vehicle = connect('/dev/ttyAMA0', baud=57600, wait_ready=True)
+
+################# Flight Control ##############################
+# Function to set loiter mode (pause guided mode)
+def set_loiter_mode():
+    vehicle.mode = VehicleMode("LOITER")
+    print("Switched to Loiter mode (pausing guided mode)")
+
+# Function to resume guided mode
+def resume_guided_mode():
+    vehicle.mode = VehicleMode("GUIDED")
+    print("Resumed Guided mode")
+
+# Function to set autonomous mode
+def set_autonomous_mode():
+    vehicle.mode = VehicleMode("GUIDED")
+    print("Switched to Autonomous control mode")
+
+# Function to set RC mode
+def set_rc_mode():
+    vehicle.mode = VehicleMode("STABILIZE")
+    print("Switched to RC control mode")
+
+# Function to read terminal input
+def read_terminal_input():
+    global stage
+    while True:
+        user_input = input("Enter 'auto' for Autonomous mode, 'rc' for RC mode, 'pause' to pause, 'resume' to resume, or 'quit' to quit: ").strip().lower()
+        if user_input == 'auto':
+            set_autonomous_mode()
+        elif user_input == 'rc':
+            set_rc_mode()
+        elif user_input == 'pause':
+            set_loiter_mode()
+        elif user_input == 'resume':
+            resume_guided_mode()
+        elif user_input == 'quit':
+            stage = "quit"
+            break
+        else:
+            print("Invalid input. Please enter 'auto', 'rc', 'pause', 'resume', or 'quit'.")
 
 # Define arm and takeoff function
 def arm_and_takeoff(target_altitude):
@@ -262,46 +221,9 @@ def send_velocity(vehicle, velocity_x, velocity_y, velocity_z):
     vehicle.send_mavlink(msg)
     vehicle.flush()
 
-# Main function
-def main():
-    global stage
-    print("Type 1/2/3 \n 1: Cari barang orange \n 2: Barang orange udh diangkat, cari ember merah \n 3: Idle \n")
-    while True:
-        if stage == "1":
-            # Orange object detection and pickup
-            arm_and_takeoff(2)  # Take off to 2 meters altitude
-            bottom_camera_thread = threading.Thread(target=bottom_camera_loop, args=(bottom_cam,))
-            bottom_camera_thread.start()
-            front_camera_thread = threading.Thread(target=front_camera_loop, args=(front_cam,))
-            front_camera_thread.start()
-            bottom_camera_thread.join()
-            front_camera_thread.join()
-
-            # Pick up object
-            pick_object()
-            
-            stage = "2"  # Move to stage 2 for red object detection
-        elif stage == "2":
-            # Red object detection and drop
-            arm_and_takeoff(2)  # Take off to 2 meters altitude
-            bottom_camera_thread = threading.Thread(target=bottom_camera_loop, args=(bottom_cam,))
-            bottom_camera_thread.start()
-            bottom_camera_thread.join()
-
-            # Drop object
-            drop_object()
-            
-            stage = "3"  # Move to stage 3 for idle
-        elif stage == "3":
-            # Idle state
-            print("Drone is idle.")
-            time.sleep(5)  # Idle for 5 seconds
-        else:
-            print("Invalid stage. Please enter 1, 2, or 3.")
-            break
-
-# Drone obstacle avoidance
+# Drone obstacle avoidance with single turn logic
 def obstacle_avoidance():
+    has_turned = False  # Variable to ensure only one turn
     while True:
         front_distance = LIDAR_FRONT.readDistance()
         left_distance = LIDAR_LEFT.readDistance()
@@ -309,14 +231,16 @@ def obstacle_avoidance():
 
         if front_distance < 50:
             print("Obstacle detected ahead. Checking sides...")
-            if left_distance > 300:
+            if left_distance > 300 and not has_turned:
                 print("Turning left...")
                 send_velocity(vehicle, 0, 1, 0)  # Adjust this as needed
                 time.sleep(1)
-            elif right_distance > 300:
+                has_turned = True
+            elif right_distance > 300 and not has_turned:
                 print("Turning right...")
                 send_velocity(vehicle, 0, -1, 0)  # Adjust this as needed
                 time.sleep(1)
+                has_turned = True
             else:
                 print("No clear path detected. Stopping...")
                 send_velocity(vehicle, 0, 0, 0)
@@ -328,17 +252,147 @@ def obstacle_avoidance():
 
 # Emergency signal check
 def check_signal_strength(signal):
-    # Add your signal strength checking logic here
-    return False
+    return signal < 0.5 #Adjust strength
 
-# Start the obstacle avoidance in a separate thread
-obstacle_avoidance_thread = threading.Thread(target=obstacle_avoidance)
-obstacle_avoidance_thread.start()
+def read_rc_channel(channel):
+    """
+    Reads the specified RC channel value.
+    """
+    return vehicle.channels[channel]
 
-# Main program execution
-if __name__ == "__main__":
+def check_rc_switch():
+    """
+    Checks the RC switch to change between autonomous and RC control.
+    Assumes channel 7 is used for switching.
+    """
+    rc_value = read_rc_channel(7)
+    if rc_value > 1500:
+        set_rc_mode()  # Switch to RC control
+    else:
+        set_autonomous_mode()  # Switch to autonomous mode
+###############################################################
+
+# Main function
+def main():
+    start_command_listener()
+    global stage
+    stage = "1"
+    
     try:
-        main()
+        arm_and_takeoff(1)  # Take off to 1 meter altitude
+        
+        # Start the obstacle avoidance in a separate thread
+        obstacle_avoidance_thread = threading.Thread(target=obstacle_avoidance)
+        obstacle_avoidance_thread.start()
+
+        while True:
+            signal = vehicle.last_heartbeat
+
+            # Emergency signal lost system
+            if check_signal_strength(signal):
+                print("Signal lost. Initiating emergency landing...")
+                vehicle.mode = VehicleMode("LAND")
+                break
+
+            check_rc_switch()  # Check the RC switch position
+
+            if stage == "1":
+                # Orange object detection and pickup
+                result, frame = bottom_cam.read()
+                if not result:
+                    break
+
+                contours = detect_orange(frame)
+                frame_height, frame_width = frame.shape[:2]
+                frame_center = [frame_width // 2, frame_height // 2]
+
+                if contours:
+                    largest_contour = max(contours, key=cv2.contourArea)
+                    M = cv2.moments(largest_contour)
+                    if M["m00"] != 0:
+                        cX = int(M["m10"] / M["m00"])
+                        cY = int(M["m01"] / M["m00"])
+                        last_cX, last_cY = cX, cY
+                        cv2.drawContours(frame, [largest_contour], -1, (0, 255, 0), 2)
+
+                if last_cX is not None and last_cY is not None:
+                    cv2.circle(frame, (last_cX, last_cY), 7, (255, 0, 0), -1)
+                    cv2.putText(frame, f"Center: ({last_cX}, {last_cY})", (last_cX - 50, last_cY - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    center = [last_cX, last_cY]
+
+                    velocity_x, velocity_y = drone_centering(center, frame_center, pid_x, pid_y)
+                    send_velocity(vehicle, velocity_x, velocity_y, 0)
+                    print(f"Velocity X: {velocity_x:.2f}, Velocity Y: {velocity_y:.2f}")
+
+                    if abs(velocity_x) < 0.1 and abs(velocity_y) < 0.1:
+                        print("Orange object centered. Picking up...")
+                        pick_object()
+                else:
+                    send_velocity(vehicle, 1, 0, 0)
+                    print("Moving forward to find the orange object...")
+
+                cv2.imshow('Bottom Camera', frame)
+
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+
+                # Regardless of success, move to the next stage
+                stage = "2"
+
+            elif stage == "2":
+                # Red object detection and drop
+                result, frame = bottom_cam.read()
+                if not result:
+                    break
+
+                contours = detect_red(frame)
+                frame_height, frame_width = frame.shape[:2]
+                frame_center = [frame_width // 2, frame_height // 2]
+
+                if contours:
+                    largest_contour = max(contours, key=cv2.contourArea)
+                    M = cv2.moments(largest_contour)
+                    if M["m00"] != 0:
+                        cX = int(M["m10"] / M["m00"])
+                        cY = int(M["m01"] / M["m00"])
+                        last_cX, last_cY = cX, cY
+                        cv2.drawContours(frame, [largest_contour], -1, (0, 255, 0), 2)
+
+                if last_cX is not None and last_cY is not None:
+                    cv2.circle(frame, (last_cX, last_cY), 7, (255, 0, 0), -1)
+                    cv2.putText(frame, f"Center: ({last_cX}, {last_cY})", (last_cX - 50, last_cY - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    center = [last_cX, last_cY]
+
+                    velocity_x, velocity_y = drone_centering(center, frame_center, pid_x, pid_y)
+                    send_velocity(vehicle, velocity_x, velocity_y, 0)
+                    print(f"Velocity X: {velocity_x:.2f}, Velocity Y: {velocity_y:.2f}")
+
+                    if abs(velocity_x) < 0.1 and abs(velocity_y) < 0.1:
+                        print("Red object centered. Dropping...")
+                        drop_object()
+                else:
+                    send_velocity(vehicle, 1, 0, 0)
+                    print("Moving forward to find the red object...")
+
+                cv2.imshow('Bottom Camera', frame)
+
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+
+                # Regardless of success, move to the next stage
+                stage = "3"
+
+            elif stage == "3":
+                print("Mission complete. Landing...")
+                vehicle.mode = VehicleMode("LAND")
+                while vehicle.armed:
+                    time.sleep(1)
+                break
+
+            else:
+                print("Invalid stage. Please enter 1, 2, or 3.")
+                break
+
     finally:
         print("Ensuring the drone lands and resources are cleaned up...")
         vehicle.mode = VehicleMode("LAND")
