@@ -1,13 +1,43 @@
-from dronekit import connect, VehicleMode, LocationGlobalRelative
-from pymavlink import mavutil
 import time
-import threading
+from smbus2 import SMBus, i2c_msg
+from dronekit import connect, VehicleMode
+
+# LiDAR class
+class TFminiI2C:
+    def __init__(self, I2Cbus, address):
+        self.I2Cbus = I2Cbus
+        self.address = address
+
+    def readDistance(self):
+        try:
+            write = i2c_msg.write(self.address, [1, 2, 7])
+            read = i2c_msg.read(self.address, 7)
+            with SMBus(self.I2Cbus) as bus:
+                bus.i2c_rdwr(write, read)
+                data = list(read)
+                dist = data[3] << 8 | data[2]
+            return dist
+        except Exception as e:
+            print(f"Error reading from LiDAR at address {hex(self.address)}: {e}")
+            return None
+
+# Setup bottom LiDAR
+LIDAR_DOWN = TFminiI2C(1, 0x10)
+GROUND_CLEARANCE = 17 
+
+def get_lidar_altitude():
+    distance = LIDAR_DOWN.readDistance()
+    if distance is not None:
+        altitude = distance - GROUND_CLEARANCE
+        return altitude / 100.0  
+    else:
+        return None
 
 # Connect to the Vehicle
-vehicle = connect('/dev/ttyAMA0', baud=57600, wait_ready=True)
+vehicle = connect('/dev/ttyACM0', baud=57600, wait_ready=True)
 
 def arm_and_takeoff(target_altitude):
-    print("Basic pre-arm checks")
+    print("Performing pre-arm checks...")
     while not vehicle.is_armable:
         print("Waiting for vehicle to initialise...")
         time.sleep(1)
@@ -21,52 +51,36 @@ def arm_and_takeoff(target_altitude):
         time.sleep(1)
 
     print("Taking off!")
-    vehicle.simple_takeoff(target_altitude)
+    vehicle.simple_takeoff(target_altitude) 
 
     while True:
-        print(f"Altitude: {vehicle.location.global_relative_frame.alt}")
-        if vehicle.location.global_relative_frame.alt >= target_altitude * 0.95:
-            print("Reached target altitude")
-            break
+        lidar_altitude = get_lidar_altitude()
+        if lidar_altitude is not None:
+            print(f"LiDAR Altitude: {lidar_altitude:.2f} m")
+            if lidar_altitude >= target_altitude * 0.95:
+                print("Reached target altitude")
+                break
         time.sleep(1)
 
-def send_velocity(vehicle, velocity_x, velocity_y, velocity_z):
-    msg = vehicle.message_factory.set_position_target_local_ned_encode(
-        0, 0, 0, mavutil.mavlink.MAV_FRAME_BODY_NED, 0b0000111111000111,
-        0, 0, 0, velocity_x, velocity_y, velocity_z, 0, 0, 0, 0, 0
-    )
-    vehicle.send_mavlink(msg)
-    vehicle.flush()
+def land_drone():
+    print("Landing...")
+    vehicle.mode = VehicleMode("LAND")
+    while vehicle.armed:
+        print(f"LiDAR Altitude: {get_lidar_altitude():.2f} m")
+        time.sleep(1)
+    print("Landed and disarmed")
 
-def maintain_altitude(target_altitude):
-    while True:
-        current_altitude = get_lidar_altitude()
-        print(f"Current LiDAR Altitude: {current_altitude} meters")
-        
-        if current_altitude < target_altitude - 0.1:
-            send_velocity(vehicle, 0, 0, 0.1)  # Ascend
-        elif current_altitude > target_altitude + 0.1:
-            send_velocity(vehicle, 0, 0, -0.1)  # Descend
-        else:
-            send_velocity(vehicle, 0, 0, 0)  # Hold position
-        
-        time.sleep(0.1)
-
+# Main function
 def main():
-    target_altitude = 2.0  # Target altitude in meters
-    arm_and_takeoff(target_altitude)
-    
-    altitude_thread = threading.Thread(target=maintain_altitude, args=(target_altitude,))
-    altitude_thread.start()
-
     try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("Landing...")
-        vehicle.mode = VehicleMode("LAND")
-        altitude_thread.join()
+        arm_and_takeoff(0.2) 
+        print("Hovering for 5 seconds...")
+        time.sleep(5)  
+        land_drone() 
+    finally:
+        print("Closing vehicle connection...")
         vehicle.close()
 
+# Run the main function
 if __name__ == "__main__":
     main()

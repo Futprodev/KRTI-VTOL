@@ -2,10 +2,9 @@ import cv2
 from PIL import Image
 import numpy as np
 import time
-import threading
 
 # Initialize cameras
-front_cam = cv2.VideoCapture(0)  # Front camera
+front_cam = cv2.VideoCapture(2)  # Front camera
 bottom_cam = cv2.VideoCapture(0)  # Bottom camera
 
 # Define the lower and upper bounds for orange and red for Bottom Camera
@@ -106,8 +105,7 @@ def Detect_Orange(cam):
 
             # Draw the largest contour
             cv2.drawContours(video, [largest_contour], -1, (0, 255, 0), 2)
-
-    cv2.imshow("Detect Orange", video)
+    return video
 
 def Detect_Red(cam):
     result, video = cam.read()
@@ -141,106 +139,82 @@ def Detect_Red(cam):
 
             # Draw the largest contour
             cv2.drawContours(video, [largest_contour], -1, (0, 255, 0), 2)
-
-    cv2.imshow("Detect Red", video)
+        cv2.imshow('Bottom Camera', video)
+    return video
 
 def Detect_Gate(cam):
     #orange
     lower_limit = np.array([6, 110, 220])
     upper_limit = np.array([8, 140, 255])
-    while True:
-        result, video = cam.read()
-        hsvimage = cv2.cvtColor(video, cv2.COLOR_BGR2HSV)
+    result, video = cam.read()
+    hsvimage = cv2.cvtColor(video, cv2.COLOR_BGR2HSV)
 
-        mask = cv2.inRange(hsvimage, lower_limit, upper_limit)
-        mask_ = Image.fromarray(mask)
-        bbox = mask_.getbbox()
+    mask = cv2.inRange(hsvimage, lower_limit, upper_limit)
+    mask_ = Image.fromarray(mask)
+    bbox = mask_.getbbox()
 
-        height, width, z = video.shape
-        cx = width//2
-        cy = height//2
+    height, width, z = video.shape
+    cx = width//2
+    cy = height//2
 
-        if bbox is not None:
-            x1, y1, x2, y2 = bbox
-            frame = cv2.rectangle(video, (x1,y1), (x2,y2), (0, 255, 0), 5)
+    if bbox is not None:
+        x1, y1, x2, y2 = bbox
+        frame = cv2.rectangle(video, (x1,y1), (x2,y2), (0, 255, 0), 5)
 
-            bcx = (x2-x1)//2 + x1
-            bcy = (y2-y1)//2 + y1
+        bcx = (x2-x1)//2 + x1
+        bcy = (y2-y1)//2 + y1
 
-            cv2.circle(video, (bcx,bcy), 3, (255,0,0), 2) #box center
+        cv2.circle(video, (bcx,bcy), 3, (255,0,0), 2) #box center
 
-            if bcx < (cx-20):
-                print("yaw right")
-            elif bcx > (cx+20):
-                print("yaw left")
+        if bcx < (cx-20):
+            print("yaw right")
+        elif bcx > (cx+20):
+            print("yaw left")
 
-            if bcy < (cy-10):
-                print("down")
-            elif bcy > (cy+10):
-                print("up")
+        if bcy < (cy-10):
+            print("up")
+        elif bcy > (cy+10):
+            print("down")
 
-        cv2.line(video, (cx,0), (cx,height), (0,0,255), 2)
-        cv2.line(video, (0,cy), (width,cy), (0,0,255), 2)
-
-        #cv2.imshow("HSV", hsvimage)
-        cv2.imshow("Mask", mask)
-        cv2.imshow("Detect Gate", video)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cv2.destroyAllWindows()
+    cv2.line(video, (cx,0), (cx,height), (0,0,255), 2)
+    cv2.line(video, (0,cy), (width,cy), (0,0,255), 2)
+    cv2.imshow('Bottom Camera', video)
+    return video
 
 # Stage-based input
 stage = input("Type 1/2/3 \n 1: Cari barang orange \n 2: Barang orange udh diangkat, cari ember merah & cam depan ikutin lane \n 3: cam depan cari gate \n")
 
-# kamera depan 
-def front_camera_loop(cam):
-    global cx, cy
-    res, video = cam.read()
-    height, width, _ = video.shape
+def camera_loop(cam1, cam2):
+    global cx, cy, width, height
+    global last_cX, last_cY
+    res, video1 = cam1.read()
+    res, video2 = cam2.read()
+    height, width, _ = video1.shape
     cx = width//2
     cy = height//2
 
     x1 = width//4
     x2 = width*3//4
     while True:
-        success, frame = cam.read()
-        if not success:
+        success1, frame1 = cam1.read()
+        success2, frame2 = cam2.read()
+        if not (success1 and success2):
             break
 
         if stage == "1":
-            Detect_Orange(cam)
+            frame1 = Detect_Orange(cam1)
+            contours = detect_orange(frame2)
         elif stage == "2":
-            Detect_Red(cam)
+            frame1 = Detect_Red(cam1)
+            contours = detect_red(frame2)
         else:
-            Detect_Gate(cam)
-        
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-        
-    cam.release()
-    cv2.destroyAllWindows()
-
-# kamera bawah 
-def bottom_camera_loop(cam):
-    global last_cX, last_cY
-    while True:
-        success, frame = cam.read()
-        if not success:
-            break
-
-        if stage == "1":
-            contours = detect_orange(frame)
-        elif stage == "2":
-            contours = detect_red(frame)
-        else:
+            frame1 = Detect_Gate(cam1)
             contours = None
-
-        frame_height, frame_width = frame.shape[:2]
+        
+        frame_height, frame_width = frame2.shape[:2]
         frame_center = [frame_width // 2, frame_height // 2]
-        cv2.circle(frame, (frame_center[0], frame_center[1]), 7, (255, 0, 255), -1)
-        cv2.putText(frame, f" Frame Center: ({frame_center[0]}, {frame_center[1]})", (frame_center[0] - 70, frame_center[1] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        cv2.circle(frame2, (frame_center[0], frame_center[1]), 7, (255, 0, 255), -1)
+        cv2.putText(frame2, f" Frame Center: ({frame_center[0]}, {frame_center[1]})", (frame_center[0] - 70, frame_center[1] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
         if contours:
             largest_contour = max(contours, key=cv2.contourArea)
@@ -249,30 +223,23 @@ def bottom_camera_loop(cam):
                 cX = int(M["m10"] / M["m00"])
                 cY = int(M["m01"] / M["m00"])
                 last_cX, last_cY = cX, cY
-            cv2.drawContours(frame, [largest_contour], -1, (0, 255, 0), 2)
+            cv2.drawContours(frame2, [largest_contour], -1, (0, 255, 0), 2)
 
         if last_cX is not None and last_cY is not None:
-            cv2.circle(frame, (last_cX, last_cY), 7, (255, 0, 0), -1)
-            cv2.putText(frame, f"Center: ({last_cX}, {last_cY})", (last_cX - 50, last_cY - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            cv2.circle(frame2, (last_cX, last_cY), 7, (255, 0, 0), -1)
+            cv2.putText(frame2, f"Center: ({last_cX}, {last_cY})", (last_cX - 50, last_cY - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             center = [last_cX, last_cY]
 
             velocity_x, velocity_y = drone_centering(center, frame_center, pid_x, pid_y)
             print(f"Velocity X: {velocity_x:.2f}, Velocity Y: {velocity_y:.2f}")
 
-        cv2.imshow('Bottom Camera', frame)
+        cv2.imshow('Bottom Camera', frame2)
+        cv2.imshow('Front Camera', frame1)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
-    cam.release()
+    cam1.release()
+    cam2.release()
     cv2.destroyAllWindows()
-
-# Start detekssi loop utk tiap kamera
-front_thread = threading.Thread(target=front_camera_loop, args=(front_cam,))
-bottom_thread = threading.Thread(target=bottom_camera_loop, args=(bottom_cam,))
-
-front_thread.start()
-bottom_thread.start()
-
-front_thread.join()
-bottom_thread.join()
+camera_loop(front_cam, bottom_cam)
