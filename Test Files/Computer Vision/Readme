@@ -1,1 +1,7 @@
-This folder is for computer vision code
+Overview
+The computer vision code is designed to detect orange and red objects using two cameras: a front camera and a bottom camera. The code uses OpenCV to process video frames and identify objects based on color ranges in the HSV (Hue, Saturation, Value) color space. The detected objects are then used to control a drone's movement, centering on the objects and picking them up.
+
+Features
+Orange Object Detection: The code can detect orange objects using the front and bottom cameras.
+Red Object Detection: The code can detect red objects using the front and bottom cameras.
+PID Controllers: The code uses PID controllers to center the drone on the detected objects.
