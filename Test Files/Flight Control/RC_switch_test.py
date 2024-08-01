@@ -75,7 +75,7 @@ def return_to_launch():
     vehicle.mode = VehicleMode("RTL")
 
 def set_rc_mode():
-    vehicle.mode = VehicleMode("STABILIZE")
+    vehicle.mode = VehicleMode("LOITER")
     print("Switched to RC control mode")
 
 def set_autonomous_mode():
@@ -89,11 +89,7 @@ def read_rc_channel(channel):
     return vehicle.channels[channel]
 
 def check_rc_switch():
-    """
-    Checks the RC switch to change between autonomous and RC control.
-    Assumes channel 7 is used for switching.
-    """
-    rc_value = read_rc_channel(7)
+    rc_value = read_rc_channel(7) #change according to rc5
     print(f"RC Channel 7 value: {rc_value}")  # Print the actual RC channel value for debugging
     if rc_value > 1750:
         set_rc_mode()  # Switch to RC control mode
@@ -109,7 +105,7 @@ def main():
 
     try:
         arm_and_takeoff(0.2) 
-        print("Hovering for 5 seconds...")
+        print("Hovering for 10 seconds...")
         
         start_time = time.time()
         
@@ -127,7 +123,7 @@ def main():
                 print("RC control mode active. Not landing.")
                 continue
 
-            if time.time() - start_time > 5:  # Hover for 5 seconds
+            if time.time() - start_time > 10:  # Hover for 5 seconds
                 break
             
             time.sleep(1)
