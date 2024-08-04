@@ -1,45 +1,12 @@
 import time
-from smbus2 import SMBus, i2c_msg
 from dronekit import connect, VehicleMode
-import cv2
+from pymavlink import mavutil
 import threading
-
-bottom_cam = cv2.VideoCapture(0)
-
-# LiDAR class
-class TFminiI2C:
-    def __init__(self, I2Cbus, address):
-        self.I2Cbus = I2Cbus
-        self.address = address
-
-    def readDistance(self):
-        try:
-            write = i2c_msg.write(self.address, [1, 2, 7])
-            read = i2c_msg.read(self.address, 7)
-            with SMBus(self.I2Cbus) as bus:
-                bus.i2c_rdwr(write, read)
-                data = list(read)
-                dist = data[3] << 8 | data[2]
-            return dist
-        except Exception as e:
-            print(f"Error reading from LiDAR at address {hex(self.address)}: {e}")
-            return None
-
-# Setup bottom LiDAR
-LIDAR_DOWN = TFminiI2C(1, 0x10)
-GROUND_CLEARANCE = 9
-
-def get_lidar_altitude():
-    distance = LIDAR_DOWN.readDistance()
-    if distance is not None:
-        altitude = distance - GROUND_CLEARANCE
-        return altitude / 100.0  
-    else:
-        return None
 
 # Connect to the Vehicle
 vehicle = connect('/dev/ttyACM0', baud=57600, wait_ready=True)
 
+# PID Controller Class
 class PIDController:
     def __init__(self, Kp, Ki, Kd, setpoint=0):
         self.Kp = Kp
@@ -64,15 +31,56 @@ class PIDController:
         self.last_time = current_time
         return output
 
-pid_z = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0.2)  # Target altitude of 0.2 meters
+# PID controllers for roll, pitch, yaw, and altitude
+pid_roll = PIDController(Kp=0.2, Ki=0.1, Kd=0.01)
+pid_pitch = PIDController(Kp=0.2, Ki=0.1, Kd=0.01)
+pid_yaw = PIDController(Kp=0.25, Ki=0.1, Kd=0.01)
+pid_altitude = PIDController(Kp=0.4, Ki=0.2, Kd=0.1, setpoint=0.2)  # Target altitude 20 cm
 
-def move_drone(forward_speed, side_speed, z_speed=0):
-    msg = vehicle.message_factory.set_position_target_local_ned_encode(
-        0, 0, 0, mavutil.mavlink.MAV_FRAME_BODY_NED, 0b0000111111000111,
-        0, 0, 0, forward_speed, side_speed, z_speed, 0, 0, 0, 0, 0
+# Function to send attitude and thrust commands to the vehicle
+def send_attitude_target(roll, pitch, yaw, thrust):
+    msg = vehicle.message_factory.set_attitude_target_encode(
+        0,  # time_boot_ms (not used)
+        1,  # target system
+        1,  # target component
+        0b00000000,  # type mask: bit 1 is LSB
+        to_quaternion(roll, pitch, yaw),  # q
+        0, 0, 0,  # body roll/pitch/yaw rates
+        thrust  # thrust
     )
     vehicle.send_mavlink(msg)
+    vehicle.flush()
 
+# Function to convert roll, pitch, yaw to quaternion
+def to_quaternion(roll, pitch, yaw):
+    t0 = time.time()
+    t1 = 0.5 * roll
+    t2 = 0.5 * pitch
+    t3 = 0.5 * yaw
+    t4 = 0.5 * roll
+    return [t0, t1, t2, t3, t4]
+
+# Function to stabilize the drone
+def stabilize_drone():
+    while True:
+        # Get current roll, pitch, yaw, and altitude
+        current_roll = vehicle.attitude.roll
+        current_pitch = vehicle.attitude.pitch
+        current_yaw = vehicle.attitude.yaw
+        current_altitude = vehicle.location.global_relative_frame.alt
+
+        # Compute control signals
+        roll_control = pid_roll.compute(current_roll)
+        pitch_control = pid_pitch.compute(current_pitch)
+        yaw_control = pid_yaw.compute(current_yaw)
+        altitude_control = pid_altitude.compute(current_altitude)
+
+        # Send control signals to the drone
+        send_attitude_target(roll_control, pitch_control, yaw_control, altitude_control)
+
+        time.sleep(0.1)
+
+# Function to arm and takeoff
 def arm_and_takeoff(target_altitude):
     print("Performing pre-arm checks...")
     while not vehicle.is_armable:
@@ -92,7 +100,7 @@ def arm_and_takeoff(target_altitude):
         time.sleep(1)
 
     print("Taking off!")
-    vehicle.simple_takeoff(target_altitude) 
+    vehicle.simple_takeoff(target_altitude)
 
     while True:
         lidar_altitude = get_lidar_altitude()
@@ -101,67 +109,18 @@ def arm_and_takeoff(target_altitude):
             if lidar_altitude >= target_altitude * 0.95:
                 print("Reached target altitude")
                 break
-            elif lidar_altitude > target_altitude:
-                print("Altitude exceeded target, adjusting throttle")
-                z_speed = pid_z.compute(lidar_altitude)
-                move_drone(0, 0, z_speed)
         time.sleep(0.1)
 
-    vehicle.channels.overrides = {}
-
-def land_drone():
-    print("Landing...")
-    vehicle.mode = VehicleMode("LAND")
-    while vehicle.armed:
-        lidar_altitude = get_lidar_altitude()
-        if lidar_altitude is not None:
-            print(f"LiDAR Altitude: {lidar_altitude:.2f} m")
-        time.sleep(1)
-    print("Landed and disarmed")
-
-def bottom_feed(cam):
-    while cam.isOpened():
-        ret, frame = cam.read()
-        if ret:
-            cv2.imshow('Bottom Camera Feed', frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-        else:
-            print("Failed to capture video")
-            break
-    cam.release()
-    cv2.destroyAllWindows()
-
-def maintain_position_and_altitude(target_altitude):
-    pid_x = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0)
-    pid_y = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0)
-
-    while True:
-        lidar_altitude = get_lidar_altitude()
-        if lidar_altitude is not None:
-            z_speed = pid_z.compute(lidar_altitude)
-        else:
-            z_speed = 0
-
-        move_drone(0, 0, z_speed)
-        time.sleep(0.1)
-
+# Main function
 try:
-    if not bottom_cam.isOpened():
-        print("Error: Could not open camera.")
-        exit()
-
-    camera_thread = threading.Thread(target=bottom_feed, args=(bottom_cam,))
-    camera_thread.start()
-
-    arm_and_takeoff(0.2)
-    print("Hovering for 5 seconds...")
-    maintain_position_thread = threading.Thread(target=maintain_position_and_altitude, args=(0.2,))
-    maintain_position_thread.start()
-    time.sleep(5)
+    arm_and_takeoff(0.2)  # Takeoff to 20 cm altitude
+    print("Hovering and stabilizing...")
+    stabilize_drone_thread = threading.Thread(target=stabilize_drone)
+    stabilize_drone_thread.start()
+    time.sleep(30)  # Hover for 30 seconds
     land_drone()
 except KeyboardInterrupt:
-    print("Interrupted by user, stopping motor test")
+    print("Interrupted by user, landing the drone")
     land_drone()
 finally:
     print("Closing vehicle connection...")
