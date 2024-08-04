@@ -20,12 +20,6 @@ GROUND_CLEARANCE = 11
 object_detected = False
 stage = 1
 
-################## Drone Variables #######################
-
-GROUND_CLEARANCE = 11
-object_detected = False
-stage = 1
-
 ################## LIDAR CONTROL #########################
 
 
