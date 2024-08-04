@@ -4,7 +4,7 @@ from dronekit import connect, VehicleMode
 import cv2
 import threading
 
-bottom_cam = cv2.VideoCapture(0) 
+bottom_cam = cv2.VideoCapture(0)
 
 # LiDAR class
 class TFminiI2C:
@@ -40,6 +40,39 @@ def get_lidar_altitude():
 # Connect to the Vehicle
 vehicle = connect('/dev/ttyACM0', baud=57600, wait_ready=True)
 
+class PIDController:
+    def __init__(self, Kp, Ki, Kd, setpoint=0):
+        self.Kp = Kp
+        self.Ki = Ki
+        self.Kd = Kd
+        self.setpoint = setpoint
+        self.last_error = 0
+        self.integral = 0
+        self.last_time = time.time()
+
+    def compute(self, measured_value):
+        current_time = time.time()
+        delta_time = current_time - self.last_time
+        error = self.setpoint - measured_value
+        P_out = self.Kp * error
+        self.integral += error * delta_time
+        I_out = self.Ki * self.integral
+        delta_error = error - self.last_error
+        D_out = self.Kd * (delta_error / delta_time) if delta_time > 0 else 0
+        output = P_out + I_out + D_out
+        self.last_error = error
+        self.last_time = current_time
+        return output
+
+pid_z = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0.2)  # Target altitude of 0.2 meters
+
+def move_drone(forward_speed, side_speed, z_speed=0):
+    msg = vehicle.message_factory.set_position_target_local_ned_encode(
+        0, 0, 0, mavutil.mavlink.MAV_FRAME_BODY_NED, 0b0000111111000111,
+        0, 0, 0, forward_speed, side_speed, z_speed, 0, 0, 0, 0, 0
+    )
+    vehicle.send_mavlink(msg)
+
 def arm_and_takeoff(target_altitude):
     print("Performing pre-arm checks...")
     while not vehicle.is_armable:
@@ -68,13 +101,12 @@ def arm_and_takeoff(target_altitude):
             if lidar_altitude >= target_altitude * 0.95:
                 print("Reached target altitude")
                 break
-            # If altitude exceeds target, lower the throttle
             elif lidar_altitude > target_altitude:
-                print("Altitude exceeded target, lowering throttle")
-                vehicle.channels.overrides['3'] = 1300  # Lower throttle
+                print("Altitude exceeded target, adjusting throttle")
+                z_speed = pid_z.compute(lidar_altitude)
+                move_drone(0, 0, z_speed)
         time.sleep(0.1)
 
-    # Clear any channel overrides
     vehicle.channels.overrides = {}
 
 def land_drone():
@@ -86,7 +118,7 @@ def land_drone():
             print(f"LiDAR Altitude: {lidar_altitude:.2f} m")
         time.sleep(1)
     print("Landed and disarmed")
-    
+
 def bottom_feed(cam):
     while cam.isOpened():
         ret, frame = cam.read()
@@ -100,24 +132,37 @@ def bottom_feed(cam):
     cam.release()
     cv2.destroyAllWindows()
 
-# Main function
+def maintain_position_and_altitude(target_altitude):
+    pid_x = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0)
+    pid_y = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0)
+
+    while True:
+        lidar_altitude = get_lidar_altitude()
+        if lidar_altitude is not None:
+            z_speed = pid_z.compute(lidar_altitude)
+        else:
+            z_speed = 0
+
+        move_drone(0, 0, z_speed)
+        time.sleep(0.1)
+
 try:
     if not bottom_cam.isOpened():
         print("Error: Could not open camera.")
         exit()
-        
-    # Start the camera feed in a separate thread
+
     camera_thread = threading.Thread(target=bottom_feed, args=(bottom_cam,))
     camera_thread.start()
 
-    arm_and_takeoff(0.2) 
+    arm_and_takeoff(0.2)
     print("Hovering for 5 seconds...")
-    time.sleep(5)  
-    land_drone() 
+    maintain_position_thread = threading.Thread(target=maintain_position_and_altitude, args=(0.2,))
+    maintain_position_thread.start()
+    time.sleep(5)
+    land_drone()
 except KeyboardInterrupt:
     print("Interrupted by user, stopping motor test")
     land_drone()
-    
 finally:
     print("Closing vehicle connection...")
     vehicle.close()
