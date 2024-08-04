@@ -20,7 +20,14 @@ GROUND_CLEARANCE = 11
 object_detected = False
 stage = 1
 
+################## Drone Variables #######################
+
+GROUND_CLEARANCE = 11
+object_detected = False
+stage = 1
+
 ################## LIDAR CONTROL #########################
+
 
 class TFminiI2C:
     def __init__(self, I2Cbus, address):
@@ -44,11 +51,14 @@ class TFminiI2C:
 
 # LiDAR setup
 LIDAR_LEFT = TFminiI2C(1, 0x30)
+LIDAR_LEFT = TFminiI2C(1, 0x30)
 LIDAR_RIGHT = TFminiI2C(1, 0x11)
 LIDAR_FRONT = TFminiI2C(1, 0x12)
 LIDAR_DOWN = TFminiI2C(1, 0x10)
+LIDAR_DOWN = TFminiI2C(1, 0x10)
 
 ################## Relay Control #########################
+
 
 # GPIO setup
 RELAY_PIN = 17  # Adjust to the correct pin number
