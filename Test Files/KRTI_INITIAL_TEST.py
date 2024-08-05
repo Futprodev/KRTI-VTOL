@@ -215,6 +215,7 @@ def maintain_altitude(target_altitude):
         # Add a condition to break the loop if needed
         if not vehicle.armed:
             break
+		
 # Send velocity command to the vehicle
 def send_velocity(vehicle, velocity_x, velocity_y, velocity_z, yaw=0):
     msg = vehicle.message_factory.set_position_target_local_ned_encode(
@@ -295,7 +296,6 @@ def draw_polyline(frame, object_point):
     points = points.reshape((-1, 1, 2))
     cv2.polylines(frame, [points], isClosed=False, color=(0, 255, 0), thickness=3)
     return frame
-
 
 def drone_bottom_centering(center, frame_center, pid_x, pid_y):
     x_diff = center[0] - frame_center[0]
@@ -424,7 +424,7 @@ def bottom_camera_loop(cam):
             cv2.putText(frame, f"Center: ({last_cX}, {last_cY})", (last_cX - 50, last_cY - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             center = [last_cX, last_cY]
 
-            velocity_x, velocity_y = drone_bottom_centering(center, frame_center, pid_x, pid_y)
+            velocity_x, velocity_y = drone_bottom_centering(center, frame_center, pid_x, pid_y) # use these values to be called on the main function to center the drone
             # print(f"Velocity X: {velocity_x:.2f}, Velocity Y: {velocity_y:.2f}")
 
         cv2.imshow('Bottom Camera', frame)
@@ -461,6 +461,8 @@ def main():
             if altitude_thread.is_alive():
                 altitude_thread.join()
 
+	   # Add logic to center the drone after contour is detected, using the velocity
+
             # Pick up object
             pick_object()
             object_detected = False
@@ -480,7 +482,9 @@ def main():
             # Stop altitude maintenance thread before drop
             if altitude_thread.is_alive():
                 altitude_thread.join()
-
+	
+	   # add logic to center the drone to the dropsite
+		
             # Drop object
             drop_object()
             
