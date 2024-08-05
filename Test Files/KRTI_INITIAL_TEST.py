@@ -5,6 +5,8 @@ Flight Controls: Kenrich, Maul
 """
 
 import time
+import signal
+import sys
 from dronekit import connect, VehicleMode, LocationGlobalRelative
 from pymavlink import mavutil
 import cv2
@@ -21,7 +23,6 @@ object_detected = False
 stage = 1
 
 ################## LIDAR CONTROL #########################
-
 
 class TFminiI2C:
     def __init__(self, I2Cbus, address):
@@ -45,14 +46,11 @@ class TFminiI2C:
 
 # LiDAR setup
 LIDAR_LEFT = TFminiI2C(1, 0x30)
-LIDAR_LEFT = TFminiI2C(1, 0x30)
 LIDAR_RIGHT = TFminiI2C(1, 0x11)
 LIDAR_FRONT = TFminiI2C(1, 0x12)
 LIDAR_DOWN = TFminiI2C(1, 0x10)
-LIDAR_DOWN = TFminiI2C(1, 0x10)
 
 ################## Relay Control #########################
-
 
 # GPIO setup
 RELAY_PIN = 17  # Adjust to the correct pin number
@@ -389,6 +387,11 @@ def front_camera_loop(cam):
 
         cv2.imshow("Front Camera", frame)
 
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cam.release()
+    cv2.destroyAllWindows()
 
 # Kamera bawah 
 def bottom_camera_loop(cam):
@@ -424,11 +427,21 @@ def bottom_camera_loop(cam):
             cv2.putText(frame, f"Center: ({last_cX}, {last_cY})", (last_cX - 50, last_cY - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             center = [last_cX, last_cY]
 
-            velocity_x, velocity_y = drone_bottom_centering(center, frame_center, pid_x, pid_y) # use these values to be called on the main function to center the drone
-            # print(f"Velocity X: {velocity_x:.2f}, Velocity Y: {velocity_y:.2f}")
+            velocity_x, velocity_y = drone_bottom_centering(center, frame_center, pid_x, pid_y)
+            send_velocity(vehicle, velocity_x, velocity_y, 0)
+            time.sleep(0.1)
+        else:
+            send_velocity(vehicle, 0, 0, 0)
+            time.sleep(0.1)
 
         cv2.imshow('Bottom Camera', frame)
-        
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cam.release()
+    cv2.destroyAllWindows()
+
 ################ Main function #######################
 def main():
     global stage, object_detected
@@ -454,14 +467,21 @@ def main():
             bottom_camera_thread.start()
             front_camera_thread = threading.Thread(target=front_camera_loop, args=(front_cam,))
             front_camera_thread.start()
+
+            # Start path-finder logic
+            path_finder_thread = threading.Thread(target=path_finder)
+            path_finder_thread.start()
+
             bottom_camera_thread.join()
             front_camera_thread.join()
+
+            # Center the drone on the detected object
+            if object_detected:
+                center_drone_on_object()
 
             # Stop altitude maintenance thread before descent
             if altitude_thread.is_alive():
                 altitude_thread.join()
-
-	   # Add logic to center the drone after contour is detected, using the velocity
 
             # Pick up object
             pick_object()
@@ -477,14 +497,21 @@ def main():
             arm_and_takeoff(0.5)  # Take off to 0.5 meters altitude
             bottom_camera_thread = threading.Thread(target=bottom_camera_loop, args=(bottom_cam,))
             bottom_camera_thread.start()
+
+            # Start path-finder logic
+            path_finder_thread = threading.Thread(target=path_finder)
+            path_finder_thread.start()
+
             bottom_camera_thread.join()
+
+            # Center the drone on the detected drop site
+            if object_detected:
+                center_drone_on_object()
 
             # Stop altitude maintenance thread before drop
             if altitude_thread.is_alive():
                 altitude_thread.join()
-	
-	   # add logic to center the drone to the dropsite
-		
+
             # Drop object
             drop_object()
             
@@ -502,6 +529,19 @@ def main():
 
 # Main program execution
 if __name__ == "__main__":
+    def signal_handler(sig, frame):
+        print("Ctrl+C pressed, landing the drone")
+        vehicle.mode = VehicleMode("LAND")
+        while vehicle.armed:
+            time.sleep(1)
+        vehicle.close()
+        front_cam.release()
+        bottom_cam.release()
+        cv2.destroyAllWindows()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+
     try:
         main()
     finally:
