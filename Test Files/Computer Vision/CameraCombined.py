@@ -17,7 +17,7 @@ front_width, front_height, bottom_width, bottom_height = None, None, None, None
 
 # Global variables
 offset_x_front, offset_x_bottom, offset_y_bottom = None, None, None
-object_detected, descend, forward_stage_2, lift_object, bucket_detected = False, False, False, False, False
+object_detected, lift_object, bucket_detected = False, False, False
 
 # FUNCTIONS
 def detect_orange(frame):
@@ -54,8 +54,8 @@ def draw_polyline_front(frame, object_point):
 def Bottom_Cam_Function(frame, contours):
     """
     Get the OBJECT CENTER's distance from the TARGET COORDINATE
-    >> used in stage 1 to move
-    >> used in stage 3 to move 
+    >> used in stage 1 to align
+    >> used in stage 3 to align 
     """
     # TARGET COORDINATE
     cv2.circle(frame, (bottom_cam_target_x, bottom_cam_target_y), 7, (255, 0, 255), -1)
@@ -78,25 +78,11 @@ def Bottom_Cam_Function(frame, contours):
     else:
         return frame, None, None
 
-def Lift_Object(contours):
-    """
-    Check to see if the OBJECT's CONTOUR SIZE is above a certain threshold
-    >> used in stage 1 to see if the object is close enough to get lifted
-    >> used in stage 2 in case it ever got dropped
-    """
-    global lift_object
-    largest_contour = max(contours, key=cv2.contourArea)
-    area = cv2.contourArea(largest_contour)
-    if area > 10000: # SESUAIN
-        lift_object = True
-    else:
-        lift_object = False
-    return lift_object
-
 
 def Front_Cam_Function(frame, contours):
     """ 
     Get the OBJECT's X CENTER's distance from the TARGET's X COORDINATE
+    >> used in stage 1 to yaw
     >> used in stage 3 to yaw
     """
     # TARGET's X COORDINATE
@@ -149,7 +135,7 @@ def Detect_Gate(frame):
 def combined_camera_loop(front_cam, bottom_cam):
     global front_height, front_width, bottom_height, bottom_width
     global offset_x_front, offset_x_bottom, offset_y_bottom
-    global object_detected, descend, forward_stage_2, lift_object, bucket_detected
+    global object_detected, descend, bucket_detected
     global stage
     check_object, start_time = False, None
     # Get initial frames to determine dimensions
@@ -170,75 +156,59 @@ def combined_camera_loop(front_cam, bottom_cam):
             print("Failed to grab frame from one or both cameras")
             break
 
-        # Process the bottom camera frame
         if stage == "1":
-            contours = detect_orange(bottom_frame)
-            if contours:
+            # Bottom Cam
+            bottom_contours = detect_orange(bottom_frame)
+            cv2.putText(bottom_frame, f"Object Detected: {object_detected}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+            if bottom_contours:
                 object_detected = True 
-                bottom_frame, offset_x_bottom, offset_y_bottom = Bottom_Cam_Function(bottom_frame, contours)
+                bottom_frame, offset_x_bottom, offset_y_bottom = Bottom_Cam_Function(bottom_frame, bottom_contours)
                 cv2.putText(bottom_frame, f"Offset X: {offset_x_bottom}, Offset Y: {offset_y_bottom}", (10, bottom_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                
                 if offset_x_bottom and offset_y_bottom is not None:
                     if (abs(offset_x_bottom) < 50) and (abs(offset_y_bottom) < 50): # SESUAIN
                         descend = True
-                        lift_object = Lift_Object(contours)
-                        if lift_object == True:
-                            descend = False
-                            stage = "2"
-        elif stage == "2":
-            if check_object == True:
-                if start_time == None:
-                    start_time = time.time()
-                    elapsed_time = 0
-                if elapsed_time < 5:
-                    elapsed_time = time.time() - start_time
-                    continue
-                else:
-                    contours = detect_orange(bottom_frame)
-                    if contours:
-                        second_check = Lift_Object(contours)
-                        if second_check == True:
-                            start_time = None
-                            check_object = False
-                            forward_stage_2 = True
-                        else:
-                            forward_stage_2 = False
-                            stage = "1"
-            else:
-                contours = detect_orange(bottom_frame)
-                if contours:
-                    lift_object = Lift_Object(contours)
-                    if lift_object == True:
-                        check_object = True
-                        continue
-                    else:
-                        forward_stage_2 = False
-                        stage = "1" # Work in progress
-                        
-        elif stage == "3":
-            contours = detect_red(bottom_frame)
-            if contours:
-                bucket_detected = True
-                bottom_frame, offset_x_bottom, offset_y_bottom = Bottom_Cam_Function(bottom_frame, contours)
-                cv2.putText(bottom_frame, f"Offset X: {offset_x_bottom}, Offset Y: {offset_y_bottom}", (10, bottom_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                        stage = "2"
 
-        # Process the front camera frame
-        if stage == "1":
-            contours = detect_orange(front_frame)
-            if contours:
-                front_frame, offset_x_front = Front_Cam_Function(front_frame, contours)
+            # Front Cam
+            front_contours = detect_orange(bottom_frame)
+            if front_contours:
+                front_frame, offset_x_front = Front_Cam_Function(front_frame, front_contours)
                 cv2.putText(front_frame, f"Offset X: {offset_x_front}", (10, front_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         
+        elif stage == "2":
+            # Bottom Cam
+            descend = False
+
         elif stage == "3":
-            contours = detect_red(front_frame)
-            if contours:
-                front_frame, offset_x_front = Front_Cam_Function(front_frame, contours)
+            # Bottom Cam
+            bottom_contours = detect_red(bottom_frame)
+            cv2.putText(bottom_frame, f"Bucket Detected: {object_detected}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+            if bottom_contours:
+                bucket_detected = True
+                bottom_frame, offset_x_bottom, offset_y_bottom = Bottom_Cam_Function(bottom_frame, bottom_contours)
+                cv2.putText(bottom_frame, f"Offset X: {offset_x_bottom}, Offset Y: {offset_y_bottom}", (10, bottom_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                
+                if offset_x_bottom and offset_y_bottom is not None:
+                    if (abs(offset_x_bottom) < 50) and (abs(offset_y_bottom) < 50): # SESUAIN
+                        descend = True
+                        stage = "4"
+            # Front Cam
+            front_contours = detect_red(front_frame)
+            if front_contours:
+                front_frame, offset_x_front = Front_Cam_Function(front_frame, front_contours)
                 cv2.putText(front_frame, f"Offset X: {offset_x_front}", (10, front_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-        elif stage == "4":
+        
+        else:
+            # Front Cam
             front_frame, offset_x_front = Detect_Gate(front_frame)
             if offset_x_front is None:
                 pass
+            
         
-        # Display both framess
+        cv2.putText(bottom_frame, f"Stage: {stage}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+        cv2.putText(front_frame, f"Stage: {stage}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+        # Display both frames               
         cv2.imshow('Front Camera', front_frame)
         cv2.imshow('Bottom Camera', bottom_frame)
 
@@ -252,7 +222,7 @@ def combined_camera_loop(front_cam, bottom_cam):
 """
 Note -- Output:
 >> offset_x_front, offset_x_bottom, offset_y_bottom
->> object_detected, descend, forward_stage_2, lift_object, bucket_detected
+>> object_detected, descend, bucket_detected
 """
 
 # CALLING
