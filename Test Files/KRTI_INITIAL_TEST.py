@@ -16,13 +16,13 @@ import RPi.GPIO as GPIO
 import threading
 from smbus2 import SMBus, i2c_msg
 
-################## Drone Variables #######################
+#Drone Variables-------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 GROUND_CLEARANCE = 11
 object_detected = False
 stage = 1
 
-################## LIDAR CONTROL #########################
+# LIDAR CONTROL-------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 class TFminiI2C:
     def __init__(self, I2Cbus, address):
@@ -50,13 +50,13 @@ LIDAR_RIGHT = TFminiI2C(1, 0x11)
 LIDAR_FRONT = TFminiI2C(1, 0x12)
 LIDAR_DOWN = TFminiI2C(1, 0x10)
 
-################## Relay Control #########################
+#Relay Control-------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # GPIO setup
 RELAY_PIN = 17  # Adjust to the correct pin number
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(RELAY_PIN, GPIO.OUT)
-GPIO.output(RELAY_PIN, GPIO.LOW)
+GPIO.output(RELAY_PIN, GPIO.HIGH)  # Default state is ON
 
 def control_relay(state):
     if state == "ON":
@@ -66,17 +66,16 @@ def control_relay(state):
         GPIO.output(RELAY_PIN, GPIO.LOW)
         print("Relay OFF, electromagnet deactivated")
 
-# Make pick_object use lidar reading to descend precisely on the object
 def pick_object():
     global last_cX, last_cY
     print("Descending to pick up the object...")
 
     # PID for descent control
-    pid_z = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0.1)  # Target altitude is 0.1m above the object
+    pid_z = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0.3) 
 
-    while get_lidar_altitude() > 0.1:  # Adjust the threshold as needed
+    while get_lidar_altitude() > 0.3:  # Adjust the threshold as needed
         velocity_x, velocity_y = drone_bottom_centering([last_cX, last_cY], [width2 // 2, height2 // 2], pid_x, pid_y)
-        vz = pid_z.compute(get_lidar_altitude() - 0.1)  # Compute vertical speed to descend
+        vz = pid_z.compute(get_lidar_altitude() - 0.3)  # Compute vertical speed to descend
 
         # Ensure vertical speed is negative for descent
         send_velocity(vehicle, velocity_x, velocity_y, -abs(vz))
@@ -92,7 +91,7 @@ def drop_object():
     control_relay("OFF")
     time.sleep(2)
 
-################ Flight Parameters ##################
+#Flight Parameters-------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Connect to the Vehicle
 vehicle = connect('/dev/ttyACM0', baud=57600, wait_ready=True)
@@ -153,7 +152,6 @@ def path_finder():
 
         time.sleep(0.1)
 
-			
 # Defining altitude dgn lidar  
 def get_lidar_altitude():
     distance = LIDAR_DOWN.readDistance()
@@ -201,7 +199,7 @@ def arm_and_takeoff(target_altitude):
     # Clear any channel overrides
     vehicle.channels.overrides = {}
 
-# Fly to a specific altitude and mantain it
+# Fly to a specific altitude and maintain it
 def maintain_altitude(target_altitude):
     pid_z.setpoint = target_altitude
     while True:
@@ -252,7 +250,7 @@ pid_y = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0)
 pid_z = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0.5)  # Target altitude is 0.5m
 pid_yaw = PIDController(Kp=1.0, Ki=0.1, Kd=0.05, setpoint=0)
 
-################## Computer Vision #########################
+#Computer Vision-------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # Initialize cameras
 front_cam = cv2.VideoCapture(2)  # Front camera
@@ -356,48 +354,40 @@ def Detect_Gate(cam):
     cv2.destroyAllWindows()
 
 # Kamera depan 
-def front_camera_loop(cam):
-    while True:
-        result, frame = cam.read()
+def front_camera_loop():
+    while stage == 1:
+        result, frame = front_cam.read()
         if not result:
             break
 
-        # Deteksi orange
-        
-        hsv_image = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        lower_limit = np.array([4, 120, 60])
-        upper_limit = np.array([23, 255, 255])
-        mask = cv2.inRange(hsv_image, lower_limit, upper_limit)
-        mask_ = Image.fromarray(mask)
-        bbox = mask_.getbbox()
-
-        height, width, z = frame.shape
-        cx = width // 2
-        cy = height // 2
-
-        if bbox is not None:
-            x1, y1, x2, y2 = bbox
-            frame = cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 5)
-            bcx = (x2 - x1) // 2 + x1
-            bcy = (y2 - y1) // 2 + y1
-            cv2.circle(frame, (bcx, bcy), 3, (255, 0, 0), 2)
-
-        cv2.line(frame, (cx, 0), (cx, height), (0, 0, 255), 2)
-        cv2.line(frame, (0, cy), (width, cy), (0, 0, 255), 2)
+        # Detect orange object
+        contours = detect_orange_contours(frame)
+        if contours:
+            x, y, w, h = cv2.boundingRect(contours[0])
+            cx, cy = x + w // 2, y + h // 2
+            frame_height, frame_width = frame.shape[:2]
+            frame_center = (frame_width // 2, frame_height // 2)
+            
+            if cx < frame_center[0] - 20:
+                print("Yaw right")
+            elif cx > frame_center[0] + 20:
+                print("Yaw left")
+            
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.circle(frame, (cx, cy), 5, (255, 0, 0), -1)
 
         cv2.imshow("Front Camera", frame)
-
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    cam.release()
+    front_cam.release()
     cv2.destroyAllWindows()
 
 # Kamera bawah 
-def bottom_camera_loop(cam):
-    global last_cX, last_cY
+def bottom_camera_loop():
+    global last_cX, last_cY, object_detected
     while True:
-        success, frame = cam.read()
+        success, frame = bottom_cam.read()
         if not success:
             break
         if stage == 1:
@@ -439,10 +429,22 @@ def bottom_camera_loop(cam):
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    cam.release()
+    bottom_cam.release()
     cv2.destroyAllWindows()
 
-################ Main function #######################
+def center_drone_on_object():
+    global last_cX, last_cY
+    while True:
+        if last_cX is not None and last_cY is not None:
+            frame_center = [width2 // 2, height2 // 2]
+            velocity_x, velocity_y = drone_bottom_centering([last_cX, last_cY], frame_center, pid_x, pid_y)
+            send_velocity(vehicle, velocity_x, velocity_y, 0)
+            if abs(last_cX - frame_center[0]) < 20 and abs(last_cY - frame_center[1]) < 20:
+                break
+        time.sleep(0.1)
+    send_velocity(vehicle, 0, 0, 0)
+
+#Main function-------------------------------------------------------------------------------------------------------------------------------------------------------------
 def main():
     global stage, object_detected
     altitude_thread = None
@@ -463,9 +465,9 @@ def main():
 
             # Orange object detection and pickup
             arm_and_takeoff(0.5)  # Take off to 0.5 meters altitude
-            bottom_camera_thread = threading.Thread(target=bottom_camera_loop, args=(bottom_cam,))
+            bottom_camera_thread = threading.Thread(target=bottom_camera_loop)
             bottom_camera_thread.start()
-            front_camera_thread = threading.Thread(target=front_camera_loop, args=(front_cam,))
+            front_camera_thread = threading.Thread(target=front_camera_loop)
             front_camera_thread.start()
 
             # Start path-finder logic
@@ -495,7 +497,7 @@ def main():
 
             # Red object detection and drop
             arm_and_takeoff(0.5)  # Take off to 0.5 meters altitude
-            bottom_camera_thread = threading.Thread(target=bottom_camera_loop, args=(bottom_cam,))
+            bottom_camera_thread = threading.Thread(target=bottom_camera_loop)
             bottom_camera_thread.start()
 
             # Start path-finder logic
