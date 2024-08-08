@@ -8,11 +8,12 @@ front_cam = cv2.VideoCapture(2)  # Front camera
 bottom_cam = cv2.VideoCapture(0)  # Bottom camera
 
 # Define fixed variables
-lower_bound_orange, upper_bound_orange = np.array([4, 120, 60]), np.array([23, 255, 255])
-lower_bound_red1, upper_bound_red1 = np.array([0, 100, 100]), np.array([5, 255, 255])
-lower_bound_red2, upper_bound_red2 = np.array([165, 100, 100]), np.array([179, 255, 255])
+lower_bound_orange, upper_bound_orange = np.array([6, 120, 60]), np.array([23, 255, 255])
+lower_bound_red1, upper_bound_red1 = np.array([0, 100, 80]), np.array([2, 255, 255])
+lower_bound_red2, upper_bound_red2 = np.array([165, 100, 80]), np.array([179, 255, 255])
 
-bottom_cam_target_x, bottom_cam_target_y = 470, 320
+#bottom_cam_target_x, bottom_cam_target_y = 0, 0
+bottom_cam_target_x, bottom_cam_target_y = 320, 75
 front_width, front_height, bottom_width, bottom_height = None, None, None, None
 
 # Global variables
@@ -64,7 +65,7 @@ def Bottom_Cam_Function(frame, contours):
     # OBJECT CENTER
     largest_contour = max(contours, key=cv2.contourArea)
     M = cv2.moments(largest_contour)
-    if M["m00"] != 0:
+    if M["m00"] >= 100:
         cX = int(M["m10"] / M["m00"])
         cY = int(M["m01"] / M["m00"])
         cv2.drawContours(frame, [largest_contour], -1, (0, 255, 0), 2)
@@ -137,7 +138,6 @@ def combined_camera_loop(front_cam, bottom_cam):
     global offset_x_front, offset_x_bottom, offset_y_bottom
     global object_detected, descend, bucket_detected
     global stage
-    check_object, start_time = False, None
     # Get initial frames to determine dimensions
     ret1, front_frame = front_cam.read()
     ret2, bottom_frame = bottom_cam.read()
@@ -183,7 +183,7 @@ def combined_camera_loop(front_cam, bottom_cam):
         elif stage == "3":
             # Bottom Cam
             bottom_contours = detect_red(bottom_frame)
-            cv2.putText(bottom_frame, f"Bucket Detected: {object_detected}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+            cv2.putText(bottom_frame, f"Bucket Detected: {bucket_detected}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
             if bottom_contours:
                 bucket_detected = True
                 bottom_frame, offset_x_bottom, offset_y_bottom = Bottom_Cam_Function(bottom_frame, bottom_contours)
