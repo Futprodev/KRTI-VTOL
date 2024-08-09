@@ -4,16 +4,21 @@ import numpy as np
 import time
 
 # Initialize cameras
-front_cam = cv2.VideoCapture(0)  # Front camera
-bottom_cam = cv2.VideoCapture(2)  # Bottom camera
+front_cam = cv2.VideoCapture(2)  # Front camera
+bottom_cam = cv2.VideoCapture(0)  # Bottom camera
 
 # Define fixed variables
-lower_bound_orange, upper_bound_orange = np.array([4, 120, 60]), np.array([23, 255, 255])
-lower_bound_red1, upper_bound_red1 = np.array([0, 100, 100]), np.array([5, 255, 255])
-lower_bound_red2, upper_bound_red2 = np.array([165, 100, 100]), np.array([179, 255, 255])
+lower_bound_orange, upper_bound_orange = np.array([6, 120, 60]), np.array([23, 255, 255])
+lower_bound_red1, upper_bound_red1 = np.array([0, 100, 80]), np.array([2, 255, 255])
+lower_bound_red2, upper_bound_red2 = np.array([165, 100, 80]), np.array([179, 255, 255])
 
-bottom_cam_target_x, bottom_cam_target_y = 470, 320
+#bottom_cam_target_x, bottom_cam_target_y = 0, 0
+bottom_cam_target_x, bottom_cam_target_y = 320, 75
 front_width, front_height, bottom_width, bottom_height = None, None, None, None
+
+# Global variables
+offset_x_front, offset_x_bottom, offset_y_bottom = None, None, None
+object_detected, lift_object, bucket_detected = False, False, False
 
 # FUNCTIONS
 def detect_orange(frame):
@@ -49,9 +54,9 @@ def draw_polyline_front(frame, object_point):
 
 def Bottom_Cam_Function(frame, contours):
     """
-    Get the OBJECT CENTER's distance fron the TARGET COORDINATE
-    >> used in stage 1 to move
-    >> used in stage 3 to move 
+    Get the OBJECT CENTER's distance from the TARGET COORDINATE
+    >> used in stage 1 to align
+    >> used in stage 3 to align 
     """
     # TARGET COORDINATE
     cv2.circle(frame, (bottom_cam_target_x, bottom_cam_target_y), 7, (255, 0, 255), -1)
@@ -60,7 +65,7 @@ def Bottom_Cam_Function(frame, contours):
     # OBJECT CENTER
     largest_contour = max(contours, key=cv2.contourArea)
     M = cv2.moments(largest_contour)
-    if M["m00"] != 0:
+    if M["m00"] >= 100:
         cX = int(M["m10"] / M["m00"])
         cY = int(M["m01"] / M["m00"])
         cv2.drawContours(frame, [largest_contour], -1, (0, 255, 0), 2)
@@ -68,17 +73,21 @@ def Bottom_Cam_Function(frame, contours):
         cv2.putText(frame, f"Center: ({cX}, {cY})", (cX - 50, cY - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
     # CALCULATION
-    draw_line_bottom(frame, (bottom_cam_target_x, bottom_cam_target_y), (cX, cY))
-    offset_x, offset_y = cX - bottom_cam_target_x, cY - bottom_cam_target_y
-    return frame, offset_x, offset_y
+        draw_line_bottom(frame, (bottom_cam_target_x, bottom_cam_target_y), (cX, cY))
+        offset_x, offset_y = cX - bottom_cam_target_x, cY - bottom_cam_target_y
+        return frame, offset_x, offset_y
+    else:
+        return frame, None, None
+
 
 def Front_Cam_Function(frame, contours):
     """ 
     Get the OBJECT's X CENTER's distance from the TARGET's X COORDINATE
+    >> used in stage 1 to yaw
     >> used in stage 3 to yaw
     """
     # TARGET's X COORDINATE
-    cv2.line(frame, (front_width//2, 0), (front_width//2, front_height), (0,0,0), 3)
+    cv2.line(frame, (front_width // 2, 0), (front_width // 2, front_height), (0, 0, 0), 3)
 
     # OBJECT's X CENTER
     largest_contour = max(contours, key=cv2.contourArea)
@@ -94,9 +103,11 @@ def Front_Cam_Function(frame, contours):
         cv2.circle(frame, extRight, 2, (0, 0, 255), 3)
         cv2.drawContours(frame, [largest_contour], -1, (0, 255, 0), 2)
 
-    # CALCULATION
-    offset_x = ContourX - (front_width//2)
-    return frame, offset_x
+        # CALCULATION
+        offset_x = ContourX - (front_width // 2)
+        return frame, offset_x
+    else:
+        return frame, None
 
 def Detect_Gate(frame):
     """ 
@@ -110,87 +121,110 @@ def Detect_Gate(frame):
 
     if bbox is not None:
         x1, y1, x2, y2 = bbox
-        frame = cv2.rectangle(frame, (x1,y1), (x2,y2), (0, 255, 0), 5)
-        bcx = (x2-x1)//2 + x1
-        bcy = (y2-y1)//2 + y1
-        cv2.circle(frame, (bcx,bcy), 3, (255,0,0), 2)
+        frame = cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 5)
+        bcx = (x2 - x1) // 2 + x1
+        bcy = (y2 - y1) // 2 + y1
+        cv2.circle(frame, (bcx, bcy), 3, (255, 0, 0), 2)
     else:
         return frame, None
 
     # CALCULATION
-    offset_x = bcx - (front_width//2)
+    offset_x = bcx - (front_width // 2)
     return frame, offset_x
 
-
-# MAIN LOOP FUNCTIONS
-def bottom_camera_loop(cam):
-    global bottom_height, bottom_width
-    res, video = cam.read()
-    bottom_height, bottom_width, _ = video.shape
+# Combined camera loop
+def combined_camera_loop(front_cam, bottom_cam):
+    global front_height, front_width, bottom_height, bottom_width
+    global offset_x_front, offset_x_bottom, offset_y_bottom
+    global object_detected, descend, bucket_detected
+    global stage
+    # Get initial frames to determine dimensions
+    ret1, front_frame = front_cam.read()
+    ret2, bottom_frame = bottom_cam.read()
+    if ret1 and ret2:
+        front_height, front_width, _ = front_frame.shape
+        bottom_height, bottom_width, _ = bottom_frame.shape
+    else:
+        print("Failed to read from one or both cameras")
+        return
 
     while True:
-        success, frame = cam.read()
-        if not success:
+        ret1, front_frame = front_cam.read()
+        ret2, bottom_frame = bottom_cam.read()
+
+        if not ret1 or not ret2:
+            print("Failed to grab frame from one or both cameras")
             break
 
-        # SEARCHING FOR ORANGE OBJECT
         if stage == "1":
-            contours = detect_orange(frame)
-            frame, offset_x_bottom, offset_y_bottom = Bottom_Cam_Function(frame, contours)
-            cv2.putText(frame, f"Offset X: {offset_x_bottom}, Offset Y: {offset_y_bottom}", (10, bottom_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-        # SEARCHING FOR RED BUCKET
+            # Bottom Cam
+            bottom_contours = detect_orange(bottom_frame)
+            cv2.putText(bottom_frame, f"Object Detected: {object_detected}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+            if bottom_contours:
+                object_detected = True 
+                bottom_frame, offset_x_bottom, offset_y_bottom = Bottom_Cam_Function(bottom_frame, bottom_contours)
+                cv2.putText(bottom_frame, f"Offset X: {offset_x_bottom}, Offset Y: {offset_y_bottom}", (10, bottom_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                
+                if offset_x_bottom and offset_y_bottom is not None:
+                    if (abs(offset_x_bottom) < 50) and (abs(offset_y_bottom) < 50): # SESUAIN
+                        descend = True
+                        stage = "2"
+
+            # Front Cam
+            front_contours = detect_orange(bottom_frame)
+            if front_contours:
+                front_frame, offset_x_front = Front_Cam_Function(front_frame, front_contours)
+                cv2.putText(front_frame, f"Offset X: {offset_x_front}", (10, front_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        
+        elif stage == "2":
+            # Bottom Cam
+            descend = False
+
         elif stage == "3":
-            contours = detect_red(frame)
-            frame, offset_x_bottom, offset_y_bottom = Bottom_Cam_Function(frame, contours)
-            cv2.putText(frame, f"Offset X: {offset_x_bottom}, Offset Y: {offset_y_bottom}", (10, bottom_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-        else:
-            pass
+            # Bottom Cam
+            bottom_contours = detect_red(bottom_frame)
+            cv2.putText(bottom_frame, f"Bucket Detected: {bucket_detected}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+            if bottom_contours:
+                bucket_detected = True
+                bottom_frame, offset_x_bottom, offset_y_bottom = Bottom_Cam_Function(bottom_frame, bottom_contours)
+                cv2.putText(bottom_frame, f"Offset X: {offset_x_bottom}, Offset Y: {offset_y_bottom}", (10, bottom_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                
+                if offset_x_bottom and offset_y_bottom is not None:
+                    if (abs(offset_x_bottom) < 50) and (abs(offset_y_bottom) < 50): # SESUAIN
+                        descend = True
+                        stage = "4"
+            # Front Cam
+            front_contours = detect_red(front_frame)
+            if front_contours:
+                front_frame, offset_x_front = Front_Cam_Function(front_frame, front_contours)
+                cv2.putText(front_frame, f"Offset X: {offset_x_front}", (10, front_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         
-        cv2.imshow('Bottom Camera', frame)
-
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-
-def front_camera_loop(cam):
-    global front_height, front_width
-    res, video = cam.read()
-    front_height, front_width, _ = video.shape
-
-    while True:
-        success, frame = cam.read()
-        if not success:
-            break
-
-        # SEARCHING FOR RED BUCKET
-        if stage == "3":
-            contours = detect_red(frame)
-            frame, offset_x_front = Front_Cam_Function(frame, contours)
-            cv2.putText(frame, f"Offset X: {offset_x_front}", (10, front_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-        # SEARCHING FOR ORANGE GATE
-        elif stage == "4":
-            frame, offset_x_front = Detect_Gate(frame)
+        else:
+            # Front Cam
+            front_frame, offset_x_front = Detect_Gate(front_frame)
             if offset_x_front is None:
-                # maju 2 detik
                 pass
-        else:
-            pass
+            
         
+        cv2.putText(bottom_frame, f"Stage: {stage}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+        cv2.putText(front_frame, f"Stage: {stage}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+        # Display both frames               
+        cv2.imshow('Front Camera', front_frame)
+        cv2.imshow('Bottom Camera', bottom_frame)
+
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-        cv2.imshow('Front Camera', frame)
-
-    cam.release()
+    front_cam.release()
+    bottom_cam.release()
     cv2.destroyAllWindows()
+
+"""
+Note -- Output:
+>> offset_x_front, offset_x_bottom, offset_y_bottom
+>> object_detected, descend, bucket_detected
+"""
 
 # CALLING
 stage = input("Type 1/2/3/4 \n 1: Cari barang orange \n 2: Barang orange udh diangkat, maju sampai belokan \n 3: Cari ember merah \n 4: Cari gate \n")
-
-front_thread = threading.Thread(target=front_camera_loop, args=(front_cam,))
-bottom_thread = threading.Thread(target=bottom_camera_loop, args=(bottom_cam,))
-
-front_thread.start()
-bottom_thread.start()
-
-front_thread.join()
-bottom_thread.join()
+combined_camera_loop(front_cam, bottom_cam)
